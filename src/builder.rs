@@ -275,7 +275,37 @@ impl WinKeyerBuilder {
             Error::Transport(format!("failed to load defaults: {e}"))
         })?;
 
-        // Step 6: Spawn IO task
+        // Step 6: Clear buffer + drain post-init status bytes.
+        // The WK may send status bytes (sometimes with XOFF set) after
+        // loading defaults. Clear the buffer to reset the WK state and
+        // drain any pending responses before the IO task starts.
+        port.write_all(&[0x0A]).await.map_err(|e| {
+            Error::Transport(format!("failed to send clear buffer: {e}"))
+        })?;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Drain post-init bytes
+        let mut drain_buf = [0u8; 64];
+        loop {
+            match tokio::time::timeout(Duration::from_millis(50), port.read(&mut drain_buf)).await {
+                Ok(Ok(n)) if n > 0 => {
+                    debug!("drained {} post-init bytes: {:02X?}", n, &drain_buf[..n]);
+                    continue;
+                }
+                _ => break,
+            }
+        }
+
+        // Step 7: Re-assert mode register to ensure serial echo is enabled.
+        // Some WK3.1 firmware may not apply the mode register from LoadDefaults
+        // reliably, so set it explicitly.
+        let mode_byte = defaults.mode_register;
+        debug!("setting mode register: 0x{mode_byte:02X}");
+        port.write_all(&[0x0E, mode_byte]).await.map_err(|e| {
+            Error::Transport(format!("failed to set mode register: {e}"))
+        })?;
+
+        // Step 8: Spawn IO task
         let (event_tx, _) = broadcast::channel::<KeyerEvent>(256);
         let _ = event_tx.send(KeyerEvent::Connected);
 
@@ -356,7 +386,12 @@ mod tests {
         assert_eq!(&written[4..6], &[0x00, 0x0B]);
         // Load defaults (0x0F + 15 bytes)
         assert_eq!(written[6], 0x0F);
-        assert_eq!(written.len(), 6 + 16); // 6 prefix + 16 load defaults
+        // Clear buffer (0x0A) after load defaults
+        assert_eq!(written[22], 0x0A);
+        // Mode register re-assert (0x0E + mode byte)
+        assert_eq!(written[23], 0x0E);
+        assert_eq!(written[24], 0xC0); // SERIAL_ECHO | PADDLE_ECHO
+        assert_eq!(written.len(), 6 + 16 + 1 + 2); // 6 prefix + 16 defaults + 1 clear + 2 mode
 
         keyer.close().await.unwrap();
     }
