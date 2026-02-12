@@ -2,11 +2,11 @@
 //!
 //! Runs through a checklist of features and reports pass/fail for each.
 //!
-//! Usage: cargo run --example hwtest -- /dev/ttyUSB0 [--speed 20]
+//! Usage: cargo run --example hwtest -- /dev/ttyUSB0 [--speed 20] [--no-sidetone]
 
 use std::time::Duration;
 
-use winkey::{Keyer, KeyerEvent, WinKeyerBuilder};
+use winkey::{Keyer, KeyerEvent, PinConfig, WinKeyerBuilder};
 
 struct TestRunner {
     passed: u32,
@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <port> [--speed <wpm>]", args[0]);
+        eprintln!("Usage: {} <port> [--speed <wpm>] [--no-sidetone]", args[0]);
         eprintln!("Example: {} /dev/ttyUSB0 --speed 25", args[0]);
         std::process::exit(1);
     }
@@ -74,18 +74,26 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
+    let no_sidetone = args.iter().any(|a| a == "--no-sidetone");
 
     let mut t = TestRunner::new();
 
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("WinKeyer Hardware Test Suite");
-    println!("Port: {port}  Speed: {speed} WPM");
+    println!(
+        "Port: {port}  Speed: {speed} WPM  Sidetone: {}",
+        if no_sidetone { "OFF" } else { "ON" }
+    );
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!();
 
     // ── Test 1: Connect ─────────────────────────────────────────
     println!("[1/10] Connect and version detection");
-    let keyer = match WinKeyerBuilder::new(port).speed(speed).build().await {
+    let mut builder = WinKeyerBuilder::new(port).speed(speed);
+    if no_sidetone {
+        builder = builder.pin_config(PinConfig::PTT_ENABLE);
+    }
+    let keyer = match builder.build().await {
         Ok(k) => {
             let ver = k.version();
             t.pass(&format!("connect (version: {ver:?})"));

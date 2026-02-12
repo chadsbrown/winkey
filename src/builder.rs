@@ -296,14 +296,28 @@ impl WinKeyerBuilder {
             }
         }
 
-        // Step 7: Re-assert mode register to ensure serial echo is enabled.
-        // Some WK3.1 firmware may not apply the mode register from LoadDefaults
-        // reliably, so set it explicitly.
+        // Step 7: Re-assert key parameters with standalone commands.
+        // Some WK3.1 firmware may not apply all LoadDefaults parameters
+        // reliably, so set them explicitly.
         let mode_byte = defaults.mode_register;
         debug!("setting mode register: 0x{mode_byte:02X}");
         port.write_all(&[0x0E, mode_byte]).await.map_err(|e| {
             Error::Transport(format!("failed to set mode register: {e}"))
         })?;
+
+        debug!("setting pin config: 0x{:02X}", defaults.pin_config);
+        port.write_all(&[0x09, defaults.pin_config])
+            .await
+            .map_err(|e| {
+                Error::Transport(format!("failed to set pin config: {e}"))
+            })?;
+
+        debug!("setting sidetone: {}", defaults.sidetone);
+        port.write_all(&[0x01, defaults.sidetone])
+            .await
+            .map_err(|e| {
+                Error::Transport(format!("failed to set sidetone: {e}"))
+            })?;
 
         // Step 8: Spawn IO task
         let (event_tx, _) = broadcast::channel::<KeyerEvent>(256);
@@ -391,7 +405,14 @@ mod tests {
         // Mode register re-assert (0x0E + mode byte)
         assert_eq!(written[23], 0x0E);
         assert_eq!(written[24], 0xC0); // SERIAL_ECHO | PADDLE_ECHO
-        assert_eq!(written.len(), 6 + 16 + 1 + 2); // 6 prefix + 16 defaults + 1 clear + 2 mode
+        // Pin config re-assert (0x09 + pin config byte)
+        assert_eq!(written[25], 0x09);
+        assert_eq!(written[26], 0xC0); // PTT_ENABLE | SIDETONE_ENABLE
+        // Sidetone re-assert (0x01 + sidetone value)
+        assert_eq!(written[27], 0x01);
+        assert_eq!(written[28], 5); // sidetone freq 5
+        // 6 prefix + 16 defaults + 1 clear + 2 mode + 2 pin + 2 sidetone
+        assert_eq!(written.len(), 6 + 16 + 1 + 2 + 2 + 2);
 
         keyer.close().await.unwrap();
     }

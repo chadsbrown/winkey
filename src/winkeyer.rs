@@ -115,6 +115,12 @@ impl WinKeyer {
         self.io.rt_command(cmd.to_vec()).await
     }
 
+    /// Set pin configuration register.
+    pub async fn set_pin_config(&self, config: crate::PinConfig) -> Result<()> {
+        let cmd = command::set_pin_config(config.bits());
+        self.io.rt_command(cmd.to_vec()).await
+    }
+
     /// Set PTT lead-in and tail times (in 10ms units).
     pub async fn set_ptt_timing(&self, lead_in: u8, tail: u8) -> Result<()> {
         let cmd = command::set_ptt_timing(lead_in, tail);
