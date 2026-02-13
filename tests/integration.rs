@@ -3,7 +3,8 @@
 use std::time::Duration;
 
 use winkey::{
-    Keyer, KeyerEvent, MockPort, PaddleMode, WinKeyerBuilder, WinKeyerVersion,
+    Keyer, KeyerEvent, LoadDefaults, MockPort, ModeRegister, PaddleMode, WinKeyerBuilder,
+    WinKeyerVersion,
 };
 
 /// Create a MockPort that delivers a version byte after a delay.
@@ -280,6 +281,44 @@ async fn set_paddle_mode_preserves_flags() {
     assert_eq!(mode_byte & 0x30, 0x10, "paddle mode should be IambicA");
     assert!(mode_byte & 0x01 != 0, "contest spacing should be preserved");
     assert!(mode_byte & 0x02 != 0, "auto space should be preserved");
+
+    keyer.close().await.unwrap();
+}
+
+/// Regression: load_defaults must update the cached mode register so that a
+/// subsequent set_paddle_mode preserves the *new* flags, not stale builder ones.
+#[tokio::test]
+async fn set_paddle_mode_after_load_defaults_uses_new_flags() {
+    let mock = mock_wk(23);
+    let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+        .contest_spacing(true) // builder sets contest_spacing
+        .build_with_port(mock.clone())
+        .await
+        .unwrap();
+
+    // load_defaults with auto_space ON, contest_spacing OFF — different from builder
+    let new_mode = (ModeRegister::PADDLE_ECHO | ModeRegister::SERIAL_ECHO | ModeRegister::AUTO_SPACE)
+        .with_paddle_mode(PaddleMode::IambicB);
+    let defaults = LoadDefaults {
+        mode_register: new_mode,
+        ..LoadDefaults::default()
+    };
+    keyer.load_defaults(&defaults).await.unwrap();
+
+    // Now change paddle mode — should preserve load_defaults flags, not builder flags
+    keyer.set_paddle_mode(PaddleMode::Ultimatic).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let written = mock.written_data();
+    let pos = written.windows(2).rposition(|w| w[0] == 0x0E).unwrap();
+    let mode_byte = written[pos + 1];
+
+    // Ultimatic = 0x20
+    assert_eq!(mode_byte & 0x30, 0x20, "paddle mode should be Ultimatic");
+    // auto_space (0x02) came from load_defaults — must be present
+    assert!(mode_byte & 0x02 != 0, "auto_space from load_defaults should be preserved");
+    // contest_spacing (0x01) was in the builder but NOT in load_defaults — must be absent
+    assert!(mode_byte & 0x01 == 0, "contest_spacing should NOT leak from stale builder cache");
 
     keyer.close().await.unwrap();
 }
