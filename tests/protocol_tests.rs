@@ -117,9 +117,9 @@ fn mode_register_combinations() {
 
 #[test]
 fn pin_config_combinations() {
-    // KEY_OUTPUT_2 is bit 2 (0x04) per WK3 Datasheet Table 10
+    // KEY_OUTPUT_2 is bit 3 (0x08) — secondary output (Pin 5 on WKUSB)
     let config = PinConfig::PTT_ENABLE | PinConfig::SIDETONE_ENABLE | PinConfig::KEY_OUTPUT_2;
-    assert_eq!(config.bits(), 0x01 | 0x02 | 0x04);
+    assert_eq!(config.bits(), 0x01 | 0x02 | 0x08);
 }
 
 #[test]

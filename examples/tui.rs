@@ -398,7 +398,7 @@ enum Adjustment {
 }
 
 fn current_pin_config(app: &App) -> PinConfig {
-    let mut cfg = PinConfig::KEY_OUTPUT_1; // Always enable primary key output
+    let mut cfg = PinConfig::KEY_OUTPUT; // Always enable primary key output
     if app.ptt_on {
         cfg |= PinConfig::PTT_ENABLE;
     }
@@ -668,7 +668,7 @@ async fn main() -> anyhow::Result<()> {
     // Connect to keyer before entering raw mode so errors print normally
     let mut builder = WinKeyerBuilder::new(port).speed(speed);
     if no_sidetone {
-        builder = builder.pin_config(PinConfig::PTT_ENABLE | PinConfig::KEY_OUTPUT_1);
+        builder = builder.pin_config(PinConfig::PTT_ENABLE | PinConfig::KEY_OUTPUT);
     }
     let keyer = builder.build().await?;
     let keyer_name = keyer.info().name.clone();

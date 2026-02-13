@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
     let mut builder = WinKeyerBuilder::new(port).speed(speed);
     if no_sidetone {
         // No sidetone: enable PTT + KeyOut1, omit SIDETONE_ENABLE
-        builder = builder.pin_config(PinConfig::PTT_ENABLE | PinConfig::KEY_OUTPUT_1);
+        builder = builder.pin_config(PinConfig::PTT_ENABLE | PinConfig::KEY_OUTPUT);
     }
     let keyer = match builder.build().await {
         Ok(k) => {

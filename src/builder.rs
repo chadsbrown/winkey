@@ -416,7 +416,7 @@ mod tests {
         assert_eq!(written[24], 0x44); // PADDLE_ECHO | SERIAL_ECHO
         // Pin config re-assert (0x09 + pin config byte)
         assert_eq!(written[25], 0x09);
-        assert_eq!(written[26], 0x0B); // PTT_ENABLE | SIDETONE_ENABLE | KEY_OUTPUT_1
+        assert_eq!(written[26], 0x07); // PTT_ENABLE | SIDETONE_ENABLE | KEY_OUTPUT
         // Sidetone re-assert (0x01 + sidetone value)
         assert_eq!(written[27], 0x01);
         assert_eq!(written[28], 5); // sidetone freq 5

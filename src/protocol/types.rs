@@ -106,16 +106,21 @@ bitflags! {
     /// Bit layout (per K1EL WK3 Datasheet v1.3, Table 10):
     /// - Bit 0: PTT enable
     /// - Bit 1: Sidetone enable
-    /// - Bit 2: Key output 2 enable
-    /// - Bit 3: Key output 1 enable
+    /// - Bit 2: Key output enable (Pin 3 on WKUSB — primary CW output)
+    /// - Bit 3: Key output 2 enable (Pin 5 on WKUSB — secondary output)
     /// - Bits 4-5: Hang time (2 bits)
     /// - Bits 6-7: Ultimatic priority (2 bits)
+    ///
+    /// NOTE: The datasheet Table 10 labels bit 2 as "KeyOut 2" and bit 3 as
+    /// "KeyOut 1", but the WK1 table clarifies bit 2 = Pin 3 and bit 3 = Pin 5.
+    /// On WKUSB, Pin 3 is the primary CW key output. We name bit 2 as
+    /// KEY_OUTPUT for API clarity since it's the port most rigs connect to.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct PinConfig: u8 {
         const PTT_ENABLE       = 0x01;
         const SIDETONE_ENABLE  = 0x02;
-        const KEY_OUTPUT_2     = 0x04;
-        const KEY_OUTPUT_1     = 0x08;
+        const KEY_OUTPUT       = 0x04;
+        const KEY_OUTPUT_2     = 0x08;
         const HANG_TIME_0      = 0x10;
         const HANG_TIME_1      = 0x20;
     }
@@ -123,8 +128,8 @@ bitflags! {
 
 impl Default for PinConfig {
     fn default() -> Self {
-        // 0x0B = PTT + Sidetone + KeyOut1 (bit 3)
-        Self::PTT_ENABLE | Self::SIDETONE_ENABLE | Self::KEY_OUTPUT_1
+        // 0x07 = PTT + Sidetone + Key Output (Pin 3, primary CW output)
+        Self::PTT_ENABLE | Self::SIDETONE_ENABLE | Self::KEY_OUTPUT
     }
 }
 
@@ -262,9 +267,9 @@ mod tests {
         let pin = PinConfig::default();
         assert!(pin.contains(PinConfig::PTT_ENABLE));
         assert!(pin.contains(PinConfig::SIDETONE_ENABLE));
-        assert!(pin.contains(PinConfig::KEY_OUTPUT_1));
-        // PTT=0x01, SIDETONE=0x02, KEY_OUTPUT_1=0x08 → 0x0B
-        assert_eq!(pin.bits(), 0x0B);
+        assert!(pin.contains(PinConfig::KEY_OUTPUT));
+        // PTT=0x01, SIDETONE=0x02, KEY_OUTPUT=0x04 → 0x07
+        assert_eq!(pin.bits(), 0x07);
     }
 
     #[test]
