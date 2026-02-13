@@ -182,11 +182,42 @@ impl WinKeyerBuilder {
         self.build_with_port(port).await
     }
 
+    /// Validate builder parameters against WinKeyer protocol limits.
+    fn validate(&self) -> Result<()> {
+        if !(5..=99).contains(&self.speed_wpm) {
+            return Err(Error::InvalidParameter(format!(
+                "speed_wpm must be 5-99, got {}",
+                self.speed_wpm
+            )));
+        }
+        if !(10..=90).contains(&self.weight) {
+            return Err(Error::InvalidParameter(format!(
+                "weight must be 10-90, got {}",
+                self.weight
+            )));
+        }
+        if !(33..=66).contains(&self.dit_dah_ratio) {
+            return Err(Error::InvalidParameter(format!(
+                "dit_dah_ratio must be 33-66, got {}",
+                self.dit_dah_ratio
+            )));
+        }
+        if !(5..=99).contains(&self.min_wpm) {
+            return Err(Error::InvalidParameter(format!(
+                "min_wpm must be 5-99, got {}",
+                self.min_wpm
+            )));
+        }
+        Ok(())
+    }
+
     /// Build using a pre-opened port (for testing with MockPort).
     pub async fn build_with_port<P>(self, mut port: P) -> Result<WinKeyer>
     where
         P: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        self.validate()?;
+
         // Step 1: Defensive close + wait
         debug!("sending defensive host close");
         port.write_all(&[0x00, 0x03]).await.map_err(|e| {
@@ -364,6 +395,7 @@ impl WinKeyerBuilder {
             version,
             event_tx,
             speed: AtomicU8::new(self.speed_wpm),
+            mode_register: AtomicU8::new(defaults.mode_register),
         })
     }
 }
@@ -541,5 +573,101 @@ mod tests {
 
         // Verify Keyer trait is object-safe
         let _: Box<dyn Keyer> = Box::new(keyer);
+    }
+
+    #[tokio::test]
+    async fn build_invalid_speed_zero() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(0)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_speed_too_high() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(100)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_weight_low() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .weight(9)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_weight_high() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .weight(91)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_ratio_low() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .dit_dah_ratio(32)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_ratio_high() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .dit_dah_ratio(67)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_min_wpm() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .min_wpm(0)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_boundary_values_succeed() {
+        // All boundary values should be accepted
+        let mock = mock_with_delayed_version(23);
+        let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(5)
+            .weight(10)
+            .dit_dah_ratio(33)
+            .min_wpm(5)
+            .build_with_port(mock)
+            .await
+            .unwrap();
+        keyer.close().await.unwrap();
+
+        let mock = mock_with_delayed_version(23);
+        let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(99)
+            .weight(90)
+            .dit_dah_ratio(66)
+            .min_wpm(99)
+            .build_with_port(mock)
+            .await
+            .unwrap();
+        keyer.close().await.unwrap();
     }
 }

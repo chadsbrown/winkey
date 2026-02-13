@@ -253,3 +253,54 @@ async fn builder_with_all_options() {
     assert_eq!(keyer.get_speed().await.unwrap(), 30);
     keyer.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn set_paddle_mode_preserves_flags() {
+    let mock = mock_wk(23);
+    let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+        .contest_spacing(true)
+        .auto_space(true)
+        .paddle_mode(PaddleMode::IambicB)
+        .build_with_port(mock.clone())
+        .await
+        .unwrap();
+
+    // Now change paddle mode — contest_spacing and auto_space should survive.
+    keyer.set_paddle_mode(PaddleMode::IambicA).await.unwrap();
+
+    // Give IO task time to process
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let written = mock.written_data();
+    // Find the last set_mode_register command (0x0E byte followed by mode byte)
+    let pos = written.windows(2).rposition(|w| w[0] == 0x0E).unwrap();
+    let mode_byte = written[pos + 1];
+    // IambicA = 0x10, contest_spacing = 0x01, auto_space = 0x02,
+    // paddle_echo = 0x40, serial_echo = 0x04
+    assert_eq!(mode_byte & 0x30, 0x10, "paddle mode should be IambicA");
+    assert!(mode_byte & 0x01 != 0, "contest spacing should be preserved");
+    assert!(mode_byte & 0x02 != 0, "auto space should be preserved");
+
+    keyer.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn echo_test_high_byte() {
+    let mock = mock_wk(23);
+    let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+        .build_with_port(mock.clone())
+        .await
+        .unwrap();
+
+    // Queue 0x80 as the echo response (would be filtered as speed-pot in Ascii mode)
+    let mock_clone = mock.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        mock_clone.queue_read(&[0x80]);
+    });
+
+    let result = keyer.echo_test(0x80).await.unwrap();
+    assert_eq!(result, 0x80);
+
+    keyer.close().await.unwrap();
+}

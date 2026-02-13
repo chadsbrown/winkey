@@ -16,6 +16,16 @@ use crate::error::{Error, Result};
 use crate::event::KeyerEvent;
 use crate::protocol::response::{self, ResponseByte};
 
+/// Controls how `read_response_bytes` treats high-bit bytes (0x80+).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) enum ResponseMode {
+    /// Filter high-bit bytes as unsolicited events (status/speed-pot).
+    #[default]
+    Ascii,
+    /// Pass all bytes through as response data (for echo_test, read_vcc, etc.).
+    Binary,
+}
+
 /// A request sent to the IO task via RT or BG channel.
 #[derive(Debug)]
 pub(crate) enum Request {
@@ -26,10 +36,11 @@ pub(crate) enum Request {
     },
     /// Write bytes and read back a specific number of response bytes.
     /// Interleaved status/speed-pot bytes are dispatched as events, not
-    /// counted toward the expected response.
+    /// counted toward the expected response (in Ascii mode).
     WriteAndRead {
         data: Vec<u8>,
         expected: usize,
+        response_mode: ResponseMode,
         reply: oneshot::Sender<Result<Vec<u8>>>,
     },
     /// Shut down the IO task and return.
@@ -85,12 +96,30 @@ impl IoHandle {
     }
 
     /// Send a command via RT and read back response bytes.
+    /// High-bit bytes are filtered as unsolicited events (status/speed-pot).
+    #[allow(dead_code)] // Used in tests; available for future ASCII response commands
     pub async fn rt_command_read(&self, data: Vec<u8>, expected: usize) -> Result<Vec<u8>> {
+        self.rt_command_read_mode(data, expected, ResponseMode::Ascii).await
+    }
+
+    /// Send a command via RT and read back raw binary response bytes.
+    /// All bytes (including 0x80+) are returned as response data.
+    pub async fn rt_command_read_binary(&self, data: Vec<u8>, expected: usize) -> Result<Vec<u8>> {
+        self.rt_command_read_mode(data, expected, ResponseMode::Binary).await
+    }
+
+    async fn rt_command_read_mode(
+        &self,
+        data: Vec<u8>,
+        expected: usize,
+        response_mode: ResponseMode,
+    ) -> Result<Vec<u8>> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.rt_tx
             .send(Request::WriteAndRead {
                 data,
                 expected,
+                response_mode,
                 reply: reply_tx,
             })
             .await
@@ -297,6 +326,7 @@ async fn handle_request<P>(
         Request::WriteAndRead {
             data,
             expected,
+            response_mode,
             reply,
         } => {
             trace!("write+read {} bytes, expecting {}", data.len(), expected);
@@ -309,10 +339,10 @@ async fn handle_request<P>(
             }
 
             // Read response bytes, filtering out interleaved status/speed-pot
-            // bytes (which the WinKeyer can send at any time).
+            // bytes (which the WinKeyer can send at any time) in Ascii mode.
             match tokio::time::timeout(
                 std::time::Duration::from_secs(2),
-                read_response_bytes(port, expected, event_tx, state),
+                read_response_bytes(port, expected, response_mode, event_tx, state),
             )
             .await
             {
@@ -336,14 +366,17 @@ async fn handle_request<P>(
     }
 }
 
-/// Read `expected` response bytes from the port, filtering out interleaved
-/// unsolicited bytes (status 0xC0-0xFF, speed pot 0x80-0xBF).
+/// Read `expected` response bytes from the port.
 ///
-/// Unsolicited bytes are dispatched as events via the broadcast channel.
-/// Only bytes in the 0x00-0x7F range count as response data.
+/// In `Ascii` mode, high-bit bytes (0x80+) are filtered as unsolicited
+/// status/speed-pot events and only 0x00-0x7F bytes count as response data.
+///
+/// In `Binary` mode, all bytes are returned as response data (for commands
+/// like echo_test that can return any byte value).
 async fn read_response_bytes<P>(
     port: &mut P,
     expected: usize,
+    mode: ResponseMode,
     event_tx: &broadcast::Sender<KeyerEvent>,
     state: &mut IoState,
 ) -> std::io::Result<Vec<u8>>
@@ -363,14 +396,19 @@ where
         }
 
         let byte = buf[0];
-        // Check if this is an unsolicited status or speed-pot byte
-        if byte & 0x80 != 0 {
-            // High bit set: this is status (0xC0+) or speed-pot (0x80-0xBF)
-            // Dispatch as an event and keep reading for the real response.
-            process_received_byte(byte, event_tx, state);
-        } else {
-            // Low byte (0x00-0x7F): this is a response byte
-            response.push(byte);
+        match mode {
+            ResponseMode::Binary => {
+                // All bytes are response data
+                response.push(byte);
+            }
+            ResponseMode::Ascii => {
+                if byte & 0x80 != 0 {
+                    // High bit set: unsolicited status/speed-pot byte
+                    process_received_byte(byte, event_tx, state);
+                } else {
+                    response.push(byte);
+                }
+            }
         }
     }
 
@@ -703,6 +741,66 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec![0x42]);
+
+        io.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn io_task_write_and_read_binary_accepts_high_bytes() {
+        let mock = MockPort::new();
+        let (event_tx, _rx) = broadcast::channel(16);
+        let io = spawn_io_task(mock.clone(), event_tx, 10);
+
+        // Queue a high-bit byte (0xC6 would be status in Ascii mode)
+        let mock_clone = mock.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            mock_clone.queue_read(&[0xC6]);
+        });
+
+        // In Binary mode, 0xC6 should come back as response data
+        let result = io.rt_command_read_binary(vec![0x00, 0x04, 0xC6], 1).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![0xC6]);
+
+        io.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn io_task_binary_mode_returns_0x80() {
+        let mock = MockPort::new();
+        let (event_tx, _rx) = broadcast::channel(16);
+        let io = spawn_io_task(mock.clone(), event_tx, 10);
+
+        // 0x80 would be classified as speed-pot in Ascii mode
+        let mock_clone = mock.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            mock_clone.queue_read(&[0x80]);
+        });
+
+        let result = io.rt_command_read_binary(vec![0x00, 0x04, 0x80], 1).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![0x80]);
+
+        io.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn io_task_binary_mode_returns_0xff() {
+        let mock = MockPort::new();
+        let (event_tx, _rx) = broadcast::channel(16);
+        let io = spawn_io_task(mock.clone(), event_tx, 10);
+
+        let mock_clone = mock.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            mock_clone.queue_read(&[0xFF]);
+        });
+
+        let result = io.rt_command_read_binary(vec![0x00, 0x04, 0xFF], 1).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec![0xFF]);
 
         io.shutdown().await.unwrap();
     }

@@ -24,6 +24,7 @@ pub struct WinKeyer {
     pub(crate) version: WinKeyerVersion,
     pub(crate) event_tx: broadcast::Sender<KeyerEvent>,
     pub(crate) speed: std::sync::atomic::AtomicU8,
+    pub(crate) mode_register: std::sync::atomic::AtomicU8,
 }
 
 
@@ -97,11 +98,16 @@ impl WinKeyer {
     }
 
     /// Set paddle mode (IambicA, IambicB, Ultimatic, Bug).
+    ///
+    /// Preserves all other mode register bits (contest spacing, auto space, etc.)
+    /// by doing a read-modify-write on the cached mode register value.
     pub async fn set_paddle_mode(&self, mode: crate::PaddleMode) -> Result<()> {
-        // Read current mode register, update paddle bits
-        let mode_byte = crate::ModeRegister::default().with_paddle_mode(mode);
-        let cmd = command::set_mode_register(mode_byte);
-        self.io.rt_command(cmd.to_vec()).await
+        let current = self.mode_register.load(Ordering::Acquire);
+        let new_byte = (current & !0x30) | mode.to_mode_bits();
+        let cmd = command::set_mode_register(new_byte);
+        self.io.rt_command(cmd.to_vec()).await?;
+        self.mode_register.store(new_byte, Ordering::Release);
+        Ok(())
     }
 
     /// Set sidetone frequency in Hz (500-4000).
@@ -162,9 +168,13 @@ impl WinKeyer {
     }
 
     /// Echo test: send byte, expect it back.
+    ///
+    /// Uses binary response mode because the echoed byte can be any value
+    /// (0x00-0xFF), including values that would normally be filtered as
+    /// unsolicited status/speed-pot events in ASCII mode.
     pub async fn echo_test(&self, byte: u8) -> Result<u8> {
         let cmd = command::admin_echo_test(byte);
-        let response = self.io.rt_command_read(cmd.to_vec(), 1).await?;
+        let response = self.io.rt_command_read_binary(cmd.to_vec(), 1).await?;
         Ok(response[0])
     }
 
@@ -208,7 +218,8 @@ impl WinKeyer {
                     return Ok(());
                 }
                 Ok(Ok(_)) => continue,
-                Ok(Err(_)) => return Err(Error::NotConnected),
+                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(broadcast::error::RecvError::Closed)) => return Err(Error::NotConnected),
                 Err(_) => return Err(Error::BufferFull),
             }
         }
