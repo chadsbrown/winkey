@@ -208,10 +208,15 @@ impl WinKeyerBuilder {
                 self.min_wpm
             )));
         }
-        if !(5..=50).contains(&self.wpm_range) {
+        if self.wpm_range < 1 {
+            return Err(Error::InvalidParameter(
+                "wpm_range must be at least 1".to_string(),
+            ));
+        }
+        if self.min_wpm.saturating_add(self.wpm_range) > 99 {
             return Err(Error::InvalidParameter(format!(
-                "wpm_range must be 5-50, got {}",
-                self.wpm_range
+                "min_wpm ({}) + wpm_range ({}) exceeds max speed 99",
+                self.min_wpm, self.wpm_range
             )));
         }
         Ok(())
@@ -652,20 +657,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_invalid_wpm_range_low() {
+    async fn build_invalid_wpm_range_zero() {
         let mock = MockPort::new();
         let result = WinKeyerBuilder::new("/dev/ttyUSB0")
-            .wpm_range(4)
+            .wpm_range(0)
             .build_with_port(mock)
             .await;
         assert!(matches!(result, Err(Error::InvalidParameter(_))));
     }
 
     #[tokio::test]
-    async fn build_invalid_wpm_range_high() {
+    async fn build_invalid_wpm_range_exceeds_max_speed() {
         let mock = MockPort::new();
         let result = WinKeyerBuilder::new("/dev/ttyUSB0")
-            .wpm_range(51)
+            .min_wpm(50)
+            .wpm_range(50)
             .build_with_port(mock)
             .await;
         assert!(matches!(result, Err(Error::InvalidParameter(_))));
@@ -680,7 +686,7 @@ mod tests {
             .weight(10)
             .dit_dah_ratio(33)
             .min_wpm(5)
-            .wpm_range(5)
+            .wpm_range(1) // minimum useful range
             .build_with_port(mock)
             .await
             .unwrap();
@@ -688,11 +694,11 @@ mod tests {
 
         let mock = mock_with_delayed_version(23);
         let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
-            .speed(99)
+            .speed(5)
             .weight(90)
             .dit_dah_ratio(66)
-            .min_wpm(99)
-            .wpm_range(50)
+            .min_wpm(5)
+            .wpm_range(94) // max: 5 + 94 = 99
             .build_with_port(mock)
             .await
             .unwrap();

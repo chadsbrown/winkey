@@ -38,7 +38,10 @@ let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
     .auto_space(true)                    // Auto letter spacing
     .sidetone(800)                       // Frequency in Hz (500-4000)
     .weight(50)                          // 10-90, default 50
+    .dit_dah_ratio(50)                   // 33-66, default 50 (3:1)
     .farnsworth(15)                      // Farnsworth speed (0 = off)
+    .min_wpm(10)                         // Speed pot minimum (5-99)
+    .wpm_range(25)                       // Speed pot span (min+range ≤ 99)
     .ptt_lead_in_ms(50)                  // PTT lead-in (ms)
     .ptt_tail_ms(30)                     // PTT tail (ms)
     .build()
