@@ -208,6 +208,12 @@ impl WinKeyerBuilder {
                 self.min_wpm
             )));
         }
+        if !(5..=50).contains(&self.wpm_range) {
+            return Err(Error::InvalidParameter(format!(
+                "wpm_range must be 5-50, got {}",
+                self.wpm_range
+            )));
+        }
         Ok(())
     }
 
@@ -646,6 +652,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_invalid_wpm_range_low() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .wpm_range(4)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
+    async fn build_invalid_wpm_range_high() {
+        let mock = MockPort::new();
+        let result = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .wpm_range(51)
+            .build_with_port(mock)
+            .await;
+        assert!(matches!(result, Err(Error::InvalidParameter(_))));
+    }
+
+    #[tokio::test]
     async fn build_boundary_values_succeed() {
         // All boundary values should be accepted
         let mock = mock_with_delayed_version(23);
@@ -654,6 +680,7 @@ mod tests {
             .weight(10)
             .dit_dah_ratio(33)
             .min_wpm(5)
+            .wpm_range(5)
             .build_with_port(mock)
             .await
             .unwrap();
@@ -665,6 +692,7 @@ mod tests {
             .weight(90)
             .dit_dah_ratio(66)
             .min_wpm(99)
+            .wpm_range(50)
             .build_with_port(mock)
             .await
             .unwrap();

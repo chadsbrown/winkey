@@ -181,7 +181,10 @@ impl WinKeyer {
     /// Load defaults (15-parameter block).
     pub async fn load_defaults(&self, defaults: &crate::LoadDefaults) -> Result<()> {
         let cmd = command::load_defaults(defaults);
-        self.io.rt_command(cmd.to_vec()).await
+        self.io.rt_command(cmd.to_vec()).await?;
+        self.mode_register
+            .store(defaults.mode_register, Ordering::Release);
+        Ok(())
     }
 
     /// Write raw bytes via the background (buffered) channel.
@@ -292,4 +295,114 @@ impl Drop for WinKeyer {
         self.io.cancel.cancel();
         self.io.task.abort();
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU8;
+    use std::sync::Arc;
+
+    use crate::event::KeyerStatus;
+    use crate::io::{IoHandle, Request};
+    use crate::keyer::{KeyerCapabilities, KeyerInfo};
+
+    /// Build a minimal WinKeyer whose bg channel is handled by a dummy task.
+    /// Uses a small broadcast channel (`cap`) so tests can easily trigger Lagged.
+    fn test_keyer(cap: usize) -> WinKeyer {
+        let (rt_tx, _rt_rx) = tokio::sync::mpsc::channel::<Request>(8);
+        let (bg_tx, mut bg_rx) = tokio::sync::mpsc::channel::<Request>(8);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let xoff = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Dummy task that acks bg commands
+        let task = tokio::spawn(async move {
+            while let Some(req) = bg_rx.recv().await {
+                match req {
+                    Request::Write { reply, .. } => {
+                        let _ = reply.send(Ok(()));
+                    }
+                    Request::WriteAndRead { reply, .. } => {
+                        let _ = reply.send(Ok(vec![]));
+                    }
+                    Request::Shutdown { reply } => {
+                        let _ = reply.send(Ok(()));
+                        return;
+                    }
+                }
+            }
+        });
+
+        let (event_tx, _) = broadcast::channel::<KeyerEvent>(cap);
+
+        WinKeyer {
+            io: IoHandle {
+                rt_tx,
+                bg_tx,
+                cancel,
+                task,
+                xoff,
+            },
+            info: KeyerInfo {
+                name: "test".into(),
+                version: "1".into(),
+                port: None,
+            },
+            capabilities: KeyerCapabilities::default(),
+            version: WinKeyerVersion::Wk2,
+            event_tx,
+            speed: AtomicU8::new(20),
+            mode_register: AtomicU8::new(0x44),
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_xoff_lagged_does_not_disconnect() {
+        let keyer = test_keyer(4); // small capacity → easy to overflow
+
+        // Set XOFF active so wait_xoff enters the recv loop
+        keyer.io.xoff.store(true, Ordering::Release);
+
+        // Spawn send_message on a background task — it will block in wait_xoff
+        let event_tx = keyer.event_tx.clone();
+        let xoff = keyer.io.xoff.clone();
+
+        let handle = tokio::spawn(async move {
+            keyer.send_message("T").await
+        });
+
+        // Give wait_xoff time to subscribe and enter the recv loop
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Overflow the broadcast channel: send cap+4 events to guarantee Lagged
+        for _ in 0..8 {
+            let _ = event_tx.send(KeyerEvent::StatusChanged(KeyerStatus {
+                xoff: true,
+                breakin: false,
+                busy: false,
+                keydown: false,
+                waiting: false,
+            }));
+        }
+
+        // Clear XOFF — the loop should recover after Lagged and see this
+        xoff.store(false, Ordering::Release);
+
+        // Send one more event to wake the recv
+        let _ = event_tx.send(KeyerEvent::StatusChanged(KeyerStatus {
+            xoff: false,
+            breakin: false,
+            busy: false,
+            keydown: false,
+            waiting: false,
+        }));
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("should not timeout")
+            .expect("task should not panic");
+
+        assert!(result.is_ok(), "Lagged should not produce NotConnected: {result:?}");
+    }
+
 }
