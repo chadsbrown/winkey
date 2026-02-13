@@ -111,9 +111,9 @@ mod tests {
     #[test]
     fn with_prosign() {
         let bytes = build_contest_message("CQ TEST <AR>");
-        // "CQ TEST " + merge(A, R)
+        // "CQ TEST " + merge(A, R) — 0x1B = Merge Letters
         assert_eq!(&bytes[..8], b"CQ TEST ");
-        assert_eq!(&bytes[8..], &[0x1A, b'A', b'R']);
+        assert_eq!(&bytes[8..], &[0x1B, b'A', b'R']);
     }
 
     #[test]
@@ -142,9 +142,9 @@ mod tests {
     #[test]
     fn multiple_prosigns() {
         let bytes = build_contest_message("<BT>K1EL<SK>");
-        assert_eq!(&bytes[0..3], &[0x1A, b'B', b'T']);
+        assert_eq!(&bytes[0..3], &[0x1B, b'B', b'T']);
         assert_eq!(&bytes[3..7], b"K1EL");
-        assert_eq!(&bytes[7..10], &[0x1A, b'S', b'K']);
+        assert_eq!(&bytes[7..10], &[0x1B, b'S', b'K']);
     }
 
     #[test]
@@ -160,8 +160,8 @@ mod tests {
         assert_eq!(bytes[15], 20);
         // " 5NN"
         assert_eq!(&bytes[16..20], b" 5NN");
-        // <AR> = [0x1A, 'A', 'R']
-        assert_eq!(&bytes[20..23], &[0x1A, b'A', b'R']);
+        // <AR> = [0x1B, 'A', 'R'] — 0x1B = Merge Letters
+        assert_eq!(&bytes[20..23], &[0x1B, b'A', b'R']);
     }
 
     #[test]

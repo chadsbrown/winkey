@@ -8,7 +8,7 @@
 //!   /prosign <XX>  Send prosign (AR, SK, BT, KN, AS)
 //!   /echo <hex>    Echo test
 //!   /weight <n>    Set weight (10-90)
-//!   /sidetone <n>  Set sidetone (1-10)
+//!   /sidetone <n>  Set sidetone frequency in Hz (500-4000)
 //!   /farnsworth <n> Set Farnsworth speed (0=off)
 //!   /pause         Toggle pause
 //!   /status        Request status
@@ -121,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
                     println!("  /prosign <XX>    Send prosign (AR, SK, BT, KN, AS)");
                     println!("  /echo <hex>      Echo test (e.g. /echo 55)");
                     println!("  /weight <n>      Set weight (10-90)");
-                    println!("  /sidetone <n>    Set sidetone (1-10)");
+                    println!("  /sidetone <n>    Set sidetone Hz (500-4000)");
                     println!("  /farnsworth <n>  Set Farnsworth speed (0=off)");
                     println!("  /pause           Toggle pause");
                     println!("  /msg <template>  Send contest message (supports <AR>, {{20}})");
@@ -199,13 +199,13 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 "/sidetone" => {
-                    if let Ok(v) = arg.parse::<u8>() {
+                    if let Ok(v) = arg.parse::<u16>() {
                         match keyer.set_sidetone(v).await {
-                            Ok(()) => println!("Sidetone set to {v}"),
+                            Ok(()) => println!("Sidetone set to {v} Hz"),
                             Err(e) => eprintln!("Error: {e}"),
                         }
                     } else {
-                        eprintln!("Usage: /sidetone <1-10>");
+                        eprintln!("Usage: /sidetone <500-4000>");
                     }
                 }
                 "/farnsworth" => {

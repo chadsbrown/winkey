@@ -21,7 +21,7 @@ fn full_handshake_byte_sequence() {
 
     // WK3 mode
     let wk3 = command::admin_set_wk3_mode();
-    assert_eq!(wk3, [0x00, 0x13]);
+    assert_eq!(wk3, [0x00, 0x14]);
 
     // Load defaults with custom params
     let mut defaults = LoadDefaults::default();
@@ -85,13 +85,13 @@ fn response_byte_classification_full_range() {
 
 #[test]
 fn status_byte_bit_extraction() {
-    // Test individual bits
+    // Test individual bits per WK3 Datasheet v1.3, Tables 14-15
     let cases: &[(u8, &str, fn(&KeyerStatus) -> bool)] = &[
-        (0xC2, "xoff", |s| s.xoff),
-        (0xC4, "breakin", |s| s.breakin),
-        (0xC8, "busy", |s| s.busy),
-        (0xD0, "keydown", |s| s.keydown),
-        (0xE0, "waiting", |s| s.waiting),
+        (0xC1, "xoff", |s| s.xoff),       // bit 0
+        (0xC2, "breakin", |s| s.breakin),  // bit 1
+        (0xC4, "busy", |s| s.busy),        // bit 2
+        (0xC8, "keydown", |s| s.keydown),  // bit 3
+        (0xD0, "waiting", |s| s.waiting),  // bit 4
     ];
 
     for (byte, name, check) in cases {
@@ -106,17 +106,20 @@ fn mode_register_combinations() {
         | ModeRegister::PADDLE_ECHO
         | ModeRegister::CONTEST_SPACING;
     let byte = mode.with_paddle_mode(PaddleMode::IambicA);
-    assert_eq!(byte, 0xC0 | 0x02 | 0x10);
+    // SERIAL_ECHO=0x04, PADDLE_ECHO=0x40, CONTEST_SPACING=0x01, IambicA=0x10
+    assert_eq!(byte, 0x04 | 0x40 | 0x01 | 0x10);
 
     let mode = ModeRegister::SERIAL_ECHO | ModeRegister::AUTO_SPACE;
     let byte = mode.with_paddle_mode(PaddleMode::Bug);
-    assert_eq!(byte, 0x40 | 0x04 | 0x30);
+    // SERIAL_ECHO=0x04, AUTO_SPACE=0x02, Bug=0x30
+    assert_eq!(byte, 0x04 | 0x02 | 0x30);
 }
 
 #[test]
 fn pin_config_combinations() {
-    let config = PinConfig::PTT_ENABLE | PinConfig::SIDETONE_ENABLE | PinConfig::PTT_OUT_2;
-    assert_eq!(config.bits(), 0x80 | 0x40 | 0x10);
+    // KEY_OUTPUT_2 is bit 2 (0x04) per WK3 Datasheet Table 10
+    let config = PinConfig::PTT_ENABLE | PinConfig::SIDETONE_ENABLE | PinConfig::KEY_OUTPUT_2;
+    assert_eq!(config.bits(), 0x01 | 0x02 | 0x04);
 }
 
 #[test]
@@ -157,7 +160,7 @@ fn contest_message_builder_complex() {
     // Starts with buffered speed change
     assert_eq!(msg[0], 0x1C);
     assert_eq!(msg[1], 28);
-    // Ends with prosign AR
+    // Ends with prosign AR (0x1B = Merge Letters)
     let tail = &msg[msg.len() - 3..];
-    assert_eq!(tail, &[0x1A, b'A', b'R']);
+    assert_eq!(tail, &[0x1B, b'A', b'R']);
 }

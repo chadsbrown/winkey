@@ -67,14 +67,14 @@ mod tests {
         let r = classify_byte(0xC0);
         assert!(matches!(r, ResponseByte::Status(s) if !s.xoff && !s.busy));
 
-        // 0xCA = status with xoff + busy
-        let r = classify_byte(0xCA);
+        // 0xC5 = status with xoff (bit 0) + busy (bit 2)
+        let r = classify_byte(0xC5);
         assert!(
             matches!(r, ResponseByte::Status(s) if s.xoff && s.busy)
         );
 
-        // 0xFF = status with all bits
-        let r = classify_byte(0xFF);
+        // 0xDF = status with all bits 0-4 set
+        let r = classify_byte(0xDF);
         assert!(matches!(r, ResponseByte::Status(s) if s.xoff && s.breakin && s.busy && s.keydown && s.waiting));
     }
 

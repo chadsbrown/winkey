@@ -11,15 +11,21 @@ pub struct KeyerStatus {
 }
 
 impl KeyerStatus {
-    /// Decode a WinKeyer status byte (bits 7-6 = 0b11).
-    /// Bit layout: 1 1 Wait Keydown Busy Breakin Xoff 0
+    /// Decode a WinKeyer status byte (bits 7-5 = 0b110).
+    ///
+    /// Bit layout per K1EL WK3 Datasheet v1.3, Tables 14-15:
+    ///   1 1 0 Wait Keydown Busy Breakin Xoff
+    ///   7 6 5  4      3      2     1      0
+    ///
+    /// Note: Keydown (bit 3) is only valid in WK1 mode. In WK2/WK3 mode,
+    /// bit 3 = 0 indicates a regular status byte (vs pushbutton status).
     pub fn from_status_byte(byte: u8) -> Self {
         Self {
-            xoff: byte & 0x02 != 0,
-            breakin: byte & 0x04 != 0,
-            busy: byte & 0x08 != 0,
-            keydown: byte & 0x10 != 0,
-            waiting: byte & 0x20 != 0,
+            xoff: byte & 0x01 != 0,
+            breakin: byte & 0x02 != 0,
+            busy: byte & 0x04 != 0,
+            keydown: byte & 0x08 != 0,
+            waiting: byte & 0x10 != 0,
         }
     }
 }
@@ -62,34 +68,39 @@ mod tests {
 
     #[test]
     fn decode_status_xoff() {
-        let status = KeyerStatus::from_status_byte(0xC2);
+        // Bit 0 = XOFF
+        let status = KeyerStatus::from_status_byte(0xC1);
         assert!(status.xoff);
         assert!(!status.breakin);
     }
 
     #[test]
     fn decode_status_breakin() {
-        let status = KeyerStatus::from_status_byte(0xC4);
+        // Bit 1 = BREAKIN
+        let status = KeyerStatus::from_status_byte(0xC2);
         assert!(!status.xoff);
         assert!(status.breakin);
     }
 
     #[test]
     fn decode_status_busy_keydown() {
-        let status = KeyerStatus::from_status_byte(0xD8);
+        // Bit 2 = BUSY, Bit 3 = KEYDOWN
+        let status = KeyerStatus::from_status_byte(0xCC);
         assert!(status.busy);
         assert!(status.keydown);
     }
 
     #[test]
     fn decode_status_waiting() {
-        let status = KeyerStatus::from_status_byte(0xE0);
+        // Bit 4 = WAIT
+        let status = KeyerStatus::from_status_byte(0xD0);
         assert!(status.waiting);
     }
 
     #[test]
     fn decode_status_all_bits() {
-        let status = KeyerStatus::from_status_byte(0xFE);
+        // Bits 0-4 all set: 0xC0 | 0x1F = 0xDF
+        let status = KeyerStatus::from_status_byte(0xDF);
         assert!(status.xoff);
         assert!(status.breakin);
         assert!(status.busy);

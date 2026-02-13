@@ -68,28 +68,28 @@ impl PaddleMode {
 bitflags! {
     /// WinKeyer Mode Register (command 0x0E).
     ///
-    /// Bit layout:
-    /// - Bit 7: Paddle echo-back enable
-    /// - Bit 6: Serial echo-back enable
+    /// Bit layout (per K1EL WK3 Datasheet v1.3, Table 12):
+    /// - Bit 7: Disable paddle watchdog (set = watchdog OFF)
+    /// - Bit 6: Paddle echo-back enable
     /// - Bits 5-4: Paddle mode (see PaddleMode)
     /// - Bit 3: Swap paddles
-    /// - Bit 2: Auto-space
-    /// - Bit 1: Contest spacing
-    /// - Bit 0: Paddle dog (watchdog)
+    /// - Bit 2: Serial echo-back enable
+    /// - Bit 1: Auto-space
+    /// - Bit 0: Contest spacing
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct ModeRegister: u8 {
-        const PADDLE_ECHO    = 0x80;
-        const SERIAL_ECHO    = 0x40;
+        const PADDLE_WATCHDOG_DISABLE = 0x80;
+        const PADDLE_ECHO    = 0x40;
         const SWAP_PADDLES   = 0x08;
-        const AUTO_SPACE     = 0x04;
-        const CONTEST_SPACING = 0x02;
-        const PADDLE_DOG     = 0x01;
+        const SERIAL_ECHO    = 0x04;
+        const AUTO_SPACE     = 0x02;
+        const CONTEST_SPACING = 0x01;
     }
 }
 
 impl Default for ModeRegister {
     fn default() -> Self {
-        Self::SERIAL_ECHO | Self::PADDLE_ECHO
+        Self::PADDLE_ECHO | Self::SERIAL_ECHO
     }
 }
 
@@ -103,34 +103,48 @@ impl ModeRegister {
 bitflags! {
     /// WinKeyer Pin Configuration (command 0x09).
     ///
-    /// Bit layout:
-    /// - Bit 7: PTT enable on/off
-    /// - Bit 6: Sidetone on/off
-    /// - Bits 5-4: PTT output selection (00=PTT1, 01=PTT2, 10=both)
-    /// - Bit 3: Ultimate dit/dah priority
-    /// - Bit 2: Hang time (bit 1)
-    /// - Bit 1: Hang time (bit 0)
-    /// - Bit 0: Sidetone paddle-only
+    /// Bit layout (per K1EL WK3 Datasheet v1.3, Table 10):
+    /// - Bit 0: PTT enable
+    /// - Bit 1: Sidetone enable
+    /// - Bit 2: Key output 2 enable
+    /// - Bit 3: Key output 1 enable
+    /// - Bits 4-5: Hang time (2 bits)
+    /// - Bits 6-7: Ultimatic priority (2 bits)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct PinConfig: u8 {
-        const PTT_ENABLE       = 0x80;
-        const SIDETONE_ENABLE  = 0x40;
-        const PTT_OUT_2        = 0x10;
-        const PTT_OUT_BOTH     = 0x20;
-        const ULTIMATIC_PRIORITY = 0x08;
-        const HANG_TIME_1      = 0x04;
-        const HANG_TIME_0      = 0x02;
-        const SIDETONE_PADDLE_ONLY = 0x01;
+        const PTT_ENABLE       = 0x01;
+        const SIDETONE_ENABLE  = 0x02;
+        const KEY_OUTPUT_2     = 0x04;
+        const KEY_OUTPUT_1     = 0x08;
+        const HANG_TIME_0      = 0x10;
+        const HANG_TIME_1      = 0x20;
     }
 }
 
 impl Default for PinConfig {
     fn default() -> Self {
-        Self::PTT_ENABLE | Self::SIDETONE_ENABLE
+        // 0x0B = PTT + Sidetone + KeyOut1 (bit 3)
+        Self::PTT_ENABLE | Self::SIDETONE_ENABLE | Self::KEY_OUTPUT_1
+    }
+}
+
+/// Compute the sidetone control byte for a given frequency and version.
+///
+/// - WK2: values 1-10, frequency = 4000/N Hz (stepped)
+/// - WK3: byte = 62500/freq, continuously adjustable 500-4000 Hz
+pub fn sidetone_byte(freq_hz: u16, version: WinKeyerVersion) -> u8 {
+    let freq_hz = freq_hz.clamp(500, 4000);
+    if version.supports_wk3() {
+        (62500u32 / freq_hz as u32) as u8
+    } else {
+        // WK2: map to nearest 1-10 value (4000/N)
+        (4000u32 / freq_hz as u32).clamp(1, 10) as u8
     }
 }
 
 /// Parameters for the Load Defaults command (0x0F, 15 bytes).
+///
+/// Field order per K1EL WK3 Datasheet v1.3, Table 13.
 #[derive(Debug, Clone)]
 pub struct LoadDefaults {
     pub mode_register: u8,
@@ -141,13 +155,13 @@ pub struct LoadDefaults {
     pub tail_time: u8,
     pub min_wpm: u8,
     pub wpm_range: u8,
-    pub extension: u8,
+    pub x2_mode: u8,
     pub key_compensation: u8,
     pub farnsworth_wpm: u8,
     pub paddle_setpoint: u8,
     pub dit_dah_ratio: u8,
     pub pin_config: u8,
-    pub pot_range_low: u8,
+    pub x1_mode: u8,
 }
 
 impl Default for LoadDefaults {
@@ -162,13 +176,13 @@ impl Default for LoadDefaults {
             tail_time: 0,
             min_wpm: 10,
             wpm_range: 25,        // 10-35 WPM pot range
-            extension: 0,
+            x2_mode: 0,          // no extended features
             key_compensation: 0,
             farnsworth_wpm: 0,    // 0 = disabled
             paddle_setpoint: 50,
             dit_dah_ratio: 50,    // 50 = 3:1 standard
             pin_config: PinConfig::default().bits(),
-            pot_range_low: 10,
+            x1_mode: 0,          // no extra letterspace
         }
     }
 }
@@ -185,13 +199,13 @@ impl LoadDefaults {
             self.tail_time,
             self.min_wpm,
             self.wpm_range,
-            self.extension,
+            self.x2_mode,
             self.key_compensation,
             self.farnsworth_wpm,
             self.paddle_setpoint,
             self.dit_dah_ratio,
             self.pin_config,
-            self.pot_range_low,
+            self.x1_mode,
         ]
     }
 }
@@ -230,7 +244,8 @@ mod tests {
     fn mode_register_with_paddle() {
         let mode = ModeRegister::SERIAL_ECHO | ModeRegister::CONTEST_SPACING;
         let byte = mode.with_paddle_mode(PaddleMode::IambicA);
-        assert_eq!(byte, 0x40 | 0x02 | 0x10);
+        // SERIAL_ECHO=0x04, CONTEST_SPACING=0x01, IambicA=0x10
+        assert_eq!(byte, 0x04 | 0x01 | 0x10);
     }
 
     #[test]
@@ -238,6 +253,8 @@ mod tests {
         let mode = ModeRegister::default();
         assert!(mode.contains(ModeRegister::SERIAL_ECHO));
         assert!(mode.contains(ModeRegister::PADDLE_ECHO));
+        // PADDLE_ECHO=0x40, SERIAL_ECHO=0x04 → 0x44
+        assert_eq!(mode.bits(), 0x44);
     }
 
     #[test]
@@ -245,6 +262,9 @@ mod tests {
         let pin = PinConfig::default();
         assert!(pin.contains(PinConfig::PTT_ENABLE));
         assert!(pin.contains(PinConfig::SIDETONE_ENABLE));
+        assert!(pin.contains(PinConfig::KEY_OUTPUT_1));
+        // PTT=0x01, SIDETONE=0x02, KEY_OUTPUT_1=0x08 → 0x0B
+        assert_eq!(pin.bits(), 0x0B);
     }
 
     #[test]

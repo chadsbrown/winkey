@@ -529,8 +529,8 @@ mod tests {
         let mock = MockPort::new();
         let (event_tx, _rx) = broadcast::channel(16);
 
-        // Queue status with XOFF set
-        mock.queue_read(&[0xC2]); // xoff=true
+        // Queue status with XOFF set (bit 0)
+        mock.queue_read(&[0xC1]); // xoff=true
         let io = spawn_io_task(mock.clone(), event_tx, 10);
 
         // Give the IO task time to process
@@ -550,8 +550,8 @@ mod tests {
         let mock = MockPort::new();
         let (event_tx, mut event_rx) = broadcast::channel(16);
 
-        // Queue breakin transition: no breakin → breakin
-        mock.queue_read(&[0xC0, 0xC4]); // clear, then breakin
+        // Queue breakin transition: no breakin → breakin (bit 1)
+        mock.queue_read(&[0xC0, 0xC2]); // clear, then breakin
         let io = spawn_io_task(mock.clone(), event_tx, 10);
 
         // First event: StatusChanged (clear)

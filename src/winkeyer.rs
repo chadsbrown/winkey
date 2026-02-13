@@ -104,14 +104,23 @@ impl WinKeyer {
         self.io.rt_command(cmd.to_vec()).await
     }
 
-    /// Set sidetone frequency (1-10).
-    pub async fn set_sidetone(&self, value: u8) -> Result<()> {
-        if !(1..=10).contains(&value) {
+    /// Set sidetone frequency in Hz (500-4000).
+    ///
+    /// Automatically encodes for WK2 (1-10 steps) or WK3 (continuous, 62500/freq).
+    pub async fn set_sidetone(&self, freq_hz: u16) -> Result<()> {
+        if !(500..=4000).contains(&freq_hz) {
             return Err(Error::InvalidParameter(format!(
-                "sidetone must be 1-10, got {value}"
+                "sidetone must be 500-4000 Hz, got {freq_hz}"
             )));
         }
-        let cmd = command::sidetone_control(value);
+        let byte = crate::protocol::types::sidetone_byte(freq_hz, self.version);
+        let cmd = command::sidetone_control(byte);
+        self.io.rt_command(cmd.to_vec()).await
+    }
+
+    /// Set sidetone volume (WK3 only). Values: 1-2 = low, 3-4 = normal/high.
+    pub async fn set_sidetone_volume(&self, value: u8) -> Result<()> {
+        let cmd = command::admin_set_sidetone_volume(value);
         self.io.rt_command(cmd.to_vec()).await
     }
 
@@ -142,7 +151,7 @@ impl WinKeyer {
 
     /// Pointer command for live callsign editing.
     pub async fn pointer_command(&self, subcmd: u8, data: &[u8]) -> Result<()> {
-        let cmd = command::pointer_command(subcmd, data);
+        let cmd = command::pointer_cmd_with_data(subcmd, data);
         self.io.bg_command(cmd).await
     }
 

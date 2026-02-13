@@ -42,7 +42,7 @@ pub struct WinKeyerBuilder {
     paddle_mode: PaddleMode,
     mode_flags: ModeRegister,
     pin_config: PinConfig,
-    sidetone: u8,
+    sidetone_hz: u16,
     weight: u8,
     ptt_lead_in: u8,
     ptt_tail: u8,
@@ -62,7 +62,7 @@ impl WinKeyerBuilder {
             paddle_mode: PaddleMode::default(),
             mode_flags: ModeRegister::default(),
             pin_config: PinConfig::default(),
-            sidetone: 5,
+            sidetone_hz: 800,
             weight: 50,
             ptt_lead_in: 0,
             ptt_tail: 0,
@@ -116,9 +116,9 @@ impl WinKeyerBuilder {
         self
     }
 
-    /// Set sidetone frequency (1-10).
-    pub fn sidetone(mut self, value: u8) -> Self {
-        self.sidetone = value;
+    /// Set sidetone frequency in Hz (500-4000).
+    pub fn sidetone(mut self, freq_hz: u16) -> Self {
+        self.sidetone_hz = freq_hz.clamp(500, 4000);
         self
     }
 
@@ -240,9 +240,17 @@ impl WinKeyerBuilder {
         // Step 4: Set WK2/WK3 mode
         if version.supports_wk3() && self.prefer_wk3 {
             debug!("setting WK3 mode");
-            port.write_all(&[0x00, 0x13]).await.map_err(|e| {
+            port.write_all(&[0x00, 0x14]).await.map_err(|e| {
                 Error::Transport(format!("failed to set WK3 mode: {e}"))
             })?;
+
+            // Step 4b: Clear X2MODE to disable paddle-only sidetone and other
+            // extended flags that may be stored in EEPROM from previous sessions.
+            debug!("clearing X2MODE");
+            port.write_all(&[0x00, 0x16, 0x00]).await.map_err(|e| {
+                Error::Transport(format!("failed to clear X2MODE: {e}"))
+            })?;
+
         } else {
             debug!("setting WK2 mode");
             port.write_all(&[0x00, 0x0B]).await.map_err(|e| {
@@ -251,22 +259,23 @@ impl WinKeyerBuilder {
         }
 
         // Step 5: Load Defaults
+        let sidetone_byte = crate::protocol::types::sidetone_byte(self.sidetone_hz, version);
         let defaults = LoadDefaults {
             mode_register: self.mode_flags.with_paddle_mode(self.paddle_mode),
             speed_wpm: self.speed_wpm,
-            sidetone: self.sidetone,
+            sidetone: sidetone_byte,
             weight: self.weight,
             lead_in_time: self.ptt_lead_in,
             tail_time: self.ptt_tail,
             min_wpm: self.min_wpm,
             wpm_range: self.wpm_range,
-            extension: 0,
+            x2_mode: 0,
             key_compensation: 0,
             farnsworth_wpm: self.farnsworth_wpm,
             paddle_setpoint: 50,
             dit_dah_ratio: self.dit_dah_ratio,
             pin_config: self.pin_config.bits(),
-            pot_range_low: self.min_wpm,
+            x1_mode: 0,
         };
 
         let cmd = crate::protocol::command::load_defaults(&defaults);
@@ -404,10 +413,10 @@ mod tests {
         assert_eq!(written[22], 0x0A);
         // Mode register re-assert (0x0E + mode byte)
         assert_eq!(written[23], 0x0E);
-        assert_eq!(written[24], 0xC0); // SERIAL_ECHO | PADDLE_ECHO
+        assert_eq!(written[24], 0x44); // PADDLE_ECHO | SERIAL_ECHO
         // Pin config re-assert (0x09 + pin config byte)
         assert_eq!(written[25], 0x09);
-        assert_eq!(written[26], 0xC0); // PTT_ENABLE | SIDETONE_ENABLE
+        assert_eq!(written[26], 0x0B); // PTT_ENABLE | SIDETONE_ENABLE | KEY_OUTPUT_1
         // Sidetone re-assert (0x01 + sidetone value)
         assert_eq!(written[27], 0x01);
         assert_eq!(written[28], 5); // sidetone freq 5
@@ -427,9 +436,13 @@ mod tests {
 
         assert_eq!(keyer.version(), WinKeyerVersion::Wk3);
 
-        // Should set WK3 mode
         let written = mock.written_data();
-        assert_eq!(&written[4..6], &[0x00, 0x13]); // WK3 mode
+        // WK3 mode (admin subcmd 20 = 0x14)
+        assert_eq!(&written[4..6], &[0x00, 0x14]);
+        // X2MODE clear (admin subcmd 22 = 0x16, value 0x00)
+        assert_eq!(&written[6..9], &[0x00, 0x16, 0x00]);
+        // Load defaults follows
+        assert_eq!(written[9], 0x0F);
 
         keyer.close().await.unwrap();
     }
@@ -474,7 +487,7 @@ mod tests {
         // Verify the mode register byte includes contest spacing
         let written = mock.written_data();
         let mode_byte = written[7]; // First byte of LoadDefaults params
-        assert!(mode_byte & 0x02 != 0, "contest spacing bit should be set");
+        assert!(mode_byte & 0x01 != 0, "contest spacing bit should be set");
 
         keyer.close().await.unwrap();
     }

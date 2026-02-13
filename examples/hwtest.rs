@@ -91,7 +91,8 @@ async fn main() -> anyhow::Result<()> {
     println!("[1/10] Connect and version detection");
     let mut builder = WinKeyerBuilder::new(port).speed(speed);
     if no_sidetone {
-        builder = builder.pin_config(PinConfig::PTT_ENABLE);
+        // No sidetone: enable PTT + KeyOut1, omit SIDETONE_ENABLE
+        builder = builder.pin_config(PinConfig::PTT_ENABLE | PinConfig::KEY_OUTPUT_1);
     }
     let keyer = match builder.build().await {
         Ok(k) => {

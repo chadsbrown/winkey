@@ -152,8 +152,8 @@ async fn paddle_breakin_event() {
 
     let mut rx = keyer.subscribe();
 
-    // Send status with no breakin, then with breakin
-    mock.queue_read(&[0xC0, 0xC4]);
+    // Send status with no breakin, then with breakin (bit 1 = BREAKIN)
+    mock.queue_read(&[0xC0, 0xC2]);
 
     // First: StatusChanged (clear)
     let ev1 = tokio::time::timeout(Duration::from_millis(200), rx.recv())
@@ -237,7 +237,7 @@ async fn builder_with_all_options() {
         .contest_spacing(true)
         .auto_space(true)
         .swap_paddles(false)
-        .sidetone(7)
+        .sidetone(571)
         .weight(55)
         .ptt_lead_in_ms(50)
         .ptt_tail_ms(40)

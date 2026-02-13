@@ -54,8 +54,8 @@ pub fn admin_reserved() -> [u8; 2] {
     [0x00, 0x08]
 }
 
-/// Admin: Get Cal (0x00 0x09). Read calibration value.
-pub fn admin_get_cal() -> [u8; 2] {
+/// Admin: Get FW Major Rev (0x00 0x09). Read firmware major version.
+pub fn admin_get_fw_major_rev() -> [u8; 2] {
     [0x00, 0x09]
 }
 
@@ -94,24 +94,61 @@ pub fn admin_firmware_update() -> [u8; 2] {
     [0x00, 0x10]
 }
 
-/// Admin: Set High Baud (0x00 0x11). Switch to 9600 baud.
-pub fn admin_set_high_baud() -> [u8; 2] {
+/// Admin: Set Low Baud (0x00 0x11). Switch to 1200 baud.
+pub fn admin_set_low_baud() -> [u8; 2] {
     [0x00, 0x11]
 }
 
-/// Admin: Set Low Baud (0x00 0x12). Switch to 1200 baud.
-pub fn admin_set_low_baud() -> [u8; 2] {
+/// Admin: Set High Baud (0x00 0x12). Switch to 9600 baud.
+pub fn admin_set_high_baud() -> [u8; 2] {
     [0x00, 0x12]
 }
 
-/// Admin: Set WK3 Mode (0x00 0x13). Switch to WK3 extended mode.
-pub fn admin_set_wk3_mode() -> [u8; 2] {
-    [0x00, 0x13]
+/// Admin: Set RTTY Mode Registers (0x00 0x13 P1 P2). WK3.1 only.
+pub fn admin_set_rtty_registers(p1: u8, p2: u8) -> [u8; 4] {
+    [0x00, 0x13, p1, p2]
 }
 
-/// Admin: Read back VCC (0x00 0x14). Read supply voltage (WK3+).
-pub fn admin_read_vcc() -> [u8; 2] {
+/// Admin: Set WK3 Mode (0x00 0x14). Switch to WK3 extended mode.
+pub fn admin_set_wk3_mode() -> [u8; 2] {
     [0x00, 0x14]
+}
+
+/// Admin: Read back VCC (0x00 0x15). Read supply voltage (WK3+).
+pub fn admin_read_vcc() -> [u8; 2] {
+    [0x00, 0x15]
+}
+
+/// Admin: Load X2MODE (0x00 0x16 value). Set X2 extension mode register (WK3 only).
+///
+/// Bit layout:
+/// - Bit 7: Paddle status reporting
+/// - Bit 6: Fast command response
+/// - Bit 5: Cut 9 (substitute N for 9)
+/// - Bit 4: Cut 0 (substitute T for 0)
+/// - Bit 3: Paddle-only sidetone
+/// - Bit 2: SO2R mode
+/// - Bit 1: Paddle mute
+/// - Bit 0: Spare
+pub fn admin_load_x2mode(value: u8) -> [u8; 3] {
+    [0x00, 0x16, value]
+}
+
+/// Admin: Get FW Minor Rev (0x00 0x17). Read firmware minor version (WK3+).
+pub fn admin_get_fw_minor_rev() -> [u8; 2] {
+    [0x00, 0x17]
+}
+
+/// Admin: Get IC Type (0x00 0x18). Read IC type identifier (WK3+).
+pub fn admin_get_ic_type() -> [u8; 2] {
+    [0x00, 0x18]
+}
+
+/// Admin: Set Sidetone Volume (0x00 0x19 value). WK3 only.
+///
+/// Values: 1-2 = low volume, 3-4 = normal (high) volume.
+pub fn admin_set_sidetone_volume(value: u8) -> [u8; 3] {
+    [0x00, 0x19, value]
 }
 
 // ---------------------------------------------------------------------------
@@ -139,10 +176,11 @@ pub fn set_ptt_timing(lead_in: u8, tail: u8) -> [u8; 3] {
     [0x04, lead_in, tail]
 }
 
-/// Set Speed Pot range (0x05 min range).
+/// Set Speed Pot range (0x05 min range 0).
 /// min = minimum WPM, range = WPM span of pot.
-pub fn set_speed_pot(min: u8, range: u8) -> [u8; 3] {
-    [0x05, min, range, /* WK returns current speed, but that's async */]
+/// Third parameter is reserved (must be 0) per WK3 Datasheet v1.3.
+pub fn set_speed_pot(min: u8, range: u8) -> [u8; 4] {
+    [0x05, min, range, 0]
 }
 
 /// Pause output (0x06 state). 1 = pause, 0 = resume.
@@ -241,9 +279,24 @@ pub fn request_status() -> [u8; 1] {
 // Buffered commands (0x16 - 0x1F)
 // ---------------------------------------------------------------------------
 
-/// Buffered Key Compensation (0x16 value).
-pub fn buffered_key_compensation(value: u8) -> [u8; 2] {
-    [0x16, value]
+/// Pointer Command (0x16 subcmd). Manipulate input buffer pointers.
+///
+/// Sub-commands per WK3 Datasheet v1.3:
+/// - 0x00: Reset input buffer pointers
+/// - 0x01: Move pointer in overwrite mode
+/// - 0x02: Move pointer in append mode
+/// - 0x03: Add multiple nulls (0x16 0x03 count)
+pub fn pointer_cmd(subcmd: u8) -> [u8; 2] {
+    [0x16, subcmd]
+}
+
+/// Pointer Command with data (0x16 subcmd data...).
+pub fn pointer_cmd_with_data(subcmd: u8, data: &[u8]) -> Vec<u8> {
+    let mut cmd = Vec::with_capacity(2 + data.len());
+    cmd.push(0x16);
+    cmd.push(subcmd);
+    cmd.extend_from_slice(data);
+    cmd
 }
 
 /// Buffered PTT on/off (0x18 on_off). 1 = assert PTT, 0 = release.
@@ -251,14 +304,19 @@ pub fn buffered_ptt(on: bool) -> [u8; 2] {
     [0x18, if on { 1 } else { 0 }]
 }
 
-/// Buffered Wait (0x19 seconds). Wait specified seconds in buffer.
-pub fn buffered_wait(seconds: u8) -> [u8; 2] {
+/// Key Buffered (0x19 seconds). Assert key output for nn seconds (0-99).
+pub fn key_buffered(seconds: u8) -> [u8; 2] {
     [0x19, seconds]
 }
 
-/// Buffered Merge Letters (0x1A c1 c2). Merge two letters into prosign.
+/// Buffered Wait (0x1A seconds). Insert a timed pause in buffer (0-99 seconds).
+pub fn buffered_wait(seconds: u8) -> [u8; 2] {
+    [0x1A, seconds]
+}
+
+/// Buffered Merge Letters (0x1B c1 c2). Merge two letters into prosign.
 pub fn buffered_merge(c1: u8, c2: u8) -> [u8; 3] {
-    [0x1A, c1, c2]
+    [0x1B, c1, c2]
 }
 
 /// Buffered Speed Change (0x1C wpm). Change speed in buffer. 0 = restore.
@@ -282,23 +340,12 @@ pub fn buffered_nop() -> [u8; 1] {
 }
 
 // ---------------------------------------------------------------------------
-// Pointer / HSCW commands
+// Dit/Dah Ratio
 // ---------------------------------------------------------------------------
 
-/// Pointer Command (0x17 subcmd [data...]). For WK pointer operations.
-pub fn pointer_command(subcmd: u8, data: &[u8]) -> Vec<u8> {
-    let mut cmd = Vec::with_capacity(2 + data.len());
-    cmd.push(0x17);
-    cmd.push(subcmd);
-    cmd.extend_from_slice(data);
-    cmd
-}
-
-/// Set Dit/Dah Ratio (0x03 + ratio). Piggybacks on weight command slot.
-/// Actually uses command 0x03 second usage as ratio setter depending on
-/// WinKeyer mode. For explicit ratio control:
+/// Set Dit/Dah Ratio (0x17 ratio). Range 33-66, default 50 = 3:1.
 pub fn set_ratio(ratio: u8) -> [u8; 2] {
-    [0x03, ratio]
+    [0x17, ratio]
 }
 
 // ---------------------------------------------------------------------------
@@ -343,8 +390,8 @@ mod tests {
         assert_eq!(admin_host_close(), [0x00, 0x03]);
         assert_eq!(admin_reset(), [0x00, 0x01]);
         assert_eq!(admin_set_wk2_mode(), [0x00, 0x0B]);
-        assert_eq!(admin_set_wk3_mode(), [0x00, 0x13]);
-        assert_eq!(admin_set_high_baud(), [0x00, 0x11]);
+        assert_eq!(admin_set_wk3_mode(), [0x00, 0x14]);
+        assert_eq!(admin_set_high_baud(), [0x00, 0x12]);
         assert_eq!(admin_echo_test(0x42), [0x00, 0x04, 0x42]);
         assert_eq!(admin_send_msg(3), [0x00, 0x0E, 3]);
     }
@@ -375,17 +422,19 @@ mod tests {
     fn buffered_commands() {
         assert_eq!(buffered_speed_change(25), [0x1C, 25]);
         assert_eq!(cancel_buffered_speed(), [0x1E]);
-        assert_eq!(buffered_merge(b'A', b'R'), [0x1A, b'A', b'R']);
+        assert_eq!(buffered_merge(b'A', b'R'), [0x1B, b'A', b'R']);
         assert_eq!(buffered_ptt(true), [0x18, 1]);
         assert_eq!(buffered_ptt(false), [0x18, 0]);
-        assert_eq!(buffered_wait(5), [0x19, 5]);
+        assert_eq!(key_buffered(5), [0x19, 5]);
+        assert_eq!(buffered_wait(5), [0x1A, 5]);
         assert_eq!(buffered_nop(), [0x1F]);
     }
 
     #[test]
     fn pointer_command_encoding() {
-        let cmd = pointer_command(0x01, &[0x41, 0x42]);
-        assert_eq!(cmd, vec![0x17, 0x01, 0x41, 0x42]);
+        assert_eq!(pointer_cmd(0x00), [0x16, 0x00]);
+        let cmd = pointer_cmd_with_data(0x03, &[5]);
+        assert_eq!(cmd, vec![0x16, 0x03, 5]);
     }
 
     #[test]
@@ -420,6 +469,6 @@ mod tests {
 
     #[test]
     fn speed_pot_command() {
-        assert_eq!(set_speed_pot(10, 25), [0x05, 10, 25]);
+        assert_eq!(set_speed_pot(10, 25), [0x05, 10, 25, 0]);
     }
 }
