@@ -246,6 +246,11 @@ impl Keyer for WinKeyer {
         self.io.bg_command(bytes).await
     }
 
+    async fn send_raw(&self, data: &[u8]) -> Result<()> {
+        self.wait_xoff().await?;
+        self.io.bg_command(data.to_vec()).await
+    }
+
     async fn abort(&self) -> Result<()> {
         let cmd = command::clear_buffer();
         self.io.rt_command(cmd.to_vec()).await

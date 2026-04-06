@@ -60,6 +60,9 @@ pub trait Keyer: Send + Sync {
     /// Enable or disable PTT output.
     async fn set_ptt(&self, on: bool) -> Result<()>;
 
+    /// Send pre-encoded bytes via the buffered channel. Blocks if XOFF is active.
+    async fn send_raw(&self, data: &[u8]) -> Result<()>;
+
     /// Subscribe to keyer events (status changes, echo, speed pot, etc.).
     fn subscribe(&self) -> broadcast::Receiver<KeyerEvent>;
 
