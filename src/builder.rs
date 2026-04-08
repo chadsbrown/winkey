@@ -122,6 +122,27 @@ impl WinKeyerBuilder {
         self
     }
 
+    /// Enable or disable the WinKeyer's audio sidetone output.
+    ///
+    /// When disabled, no audio tone is produced while sending CW; only the
+    /// key line (and PTT) are asserted. Useful for silent operation or when
+    /// sidetone is provided by the rig itself.
+    ///
+    /// Default: enabled (matches `PinConfig::default()`).
+    ///
+    /// This sets the `SIDETONE_ENABLE` bit in the pin configuration, which
+    /// is sent to the WinKeyer once during `build()` via Load Defaults.
+    /// To toggle at runtime after connection, use
+    /// [`WinKeyer::set_pin_config`] with an updated `PinConfig`.
+    pub fn sidetone_enabled(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.pin_config |= PinConfig::SIDETONE_ENABLE;
+        } else {
+            self.pin_config -= PinConfig::SIDETONE_ENABLE;
+        }
+        self
+    }
+
     /// Set keying weight (10-90, default 50).
     pub fn weight(mut self, value: u8) -> Self {
         self.weight = value;
@@ -702,6 +723,63 @@ mod tests {
             .build_with_port(mock)
             .await
             .unwrap();
+        keyer.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sidetone_disabled_clears_pin_config_bit() {
+        let mock = mock_with_delayed_version(23);
+        let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(28)
+            .sidetone_enabled(false)
+            .build_with_port(mock.clone())
+            .await
+            .unwrap();
+
+        // Pin config re-assert happens at byte index 25-26 in the handshake.
+        // With sidetone disabled: PTT_ENABLE (0x01) | KEY_OUTPUT (0x04) = 0x05
+        let written = mock.written_data();
+        assert_eq!(written[25], 0x09, "pin config command prefix");
+        assert_eq!(
+            written[26], 0x05,
+            "pin config byte with SIDETONE_ENABLE cleared"
+        );
+        keyer.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sidetone_enabled_default_keeps_pin_config_bit() {
+        let mock = mock_with_delayed_version(23);
+        let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(28)
+            // No sidetone_enabled call — default is enabled
+            .build_with_port(mock.clone())
+            .await
+            .unwrap();
+
+        // With sidetone enabled (default): PTT_ENABLE | SIDETONE_ENABLE | KEY_OUTPUT = 0x07
+        let written = mock.written_data();
+        assert_eq!(written[25], 0x09);
+        assert_eq!(
+            written[26], 0x07,
+            "pin config byte with SIDETONE_ENABLE set (default)"
+        );
+        keyer.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sidetone_enabled_true_restores_bit_if_previously_cleared() {
+        let mock = mock_with_delayed_version(23);
+        let keyer = WinKeyerBuilder::new("/dev/ttyUSB0")
+            .speed(28)
+            .sidetone_enabled(false)
+            .sidetone_enabled(true) // toggle back
+            .build_with_port(mock.clone())
+            .await
+            .unwrap();
+
+        let written = mock.written_data();
+        assert_eq!(written[26], 0x07, "toggling back to true restores bit");
         keyer.close().await.unwrap();
     }
 }
